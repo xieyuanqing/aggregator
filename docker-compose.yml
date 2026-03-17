@@ -20,7 +20,7 @@ services:
     # 默认执行一次收集任务（更适合给下游做代理池订阅源）：
     # - 不带 --all：输出 list-only 的 clash.yaml，更利于下游解析
     # - 默认跳过可用性检测（--skip）：速度更快；需要严格筛选时去掉 --skip
-    command: ["python", "-u", "subscribe/collect.py", "--overwrite", "--skip", "--targets", "clash"]
+    command: ["python", "-u", "subscribe/collect.py", "--skip", "--targets", "clash", "--pages", "10", "--num", "32"]
     restart: "no"
 
   data-server:
