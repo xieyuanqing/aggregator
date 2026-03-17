@@ -1,0 +1,31 @@
+services:
+  aggregator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 可选：国内机器可改为 https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: xieyuanqing/aggregator:local
+    container_name: aggregator
+    environment:
+      # 可选：如需推送到 Gist（collect.py 支持 -k/-g，也支持环境变量）
+      GIST_PAT: ${GIST_PAT:-}
+      GIST_LINK: ${GIST_LINK:-}
+      # 可选：自维护机场列表（URL 或 data 目录下的文件名）
+      CUSTOMIZE_LINK: ${CUSTOMIZE_LINK:-}
+    volumes:
+      # collect.py 的输出目录（clash.yaml / v2ray.txt / singbox.json / subscribes.txt 等）
+      - ./data:/aggregator/data
+    # 默认执行一次收集任务，产物落盘到 ./data
+    command: ["python", "-u", "subscribe/collect.py", "--all", "--overwrite", "--skip"]
+    restart: "no"
+
+  data-server:
+    image: nginx:alpine
+    container_name: aggregator-data-server
+    volumes:
+      - ./data:/usr/share/nginx/html:ro
+    ports:
+      - "8099:80"
+    restart: unless-stopped
