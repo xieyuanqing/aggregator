@@ -17,8 +17,10 @@ services:
     volumes:
       # collect.py 的输出目录（clash.yaml / v2ray.txt / singbox.json / subscribes.txt 等）
       - ./data:/aggregator/data
-    # 默认执行一次收集任务，产物落盘到 ./data
-    command: ["python", "-u", "subscribe/collect.py", "--all", "--overwrite", "--skip"]
+    # 默认执行一次收集任务（更适合给下游做代理池订阅源）：
+    # - 不带 --all：输出 list-only 的 clash.yaml，更利于下游解析
+    # - 默认跳过可用性检测（--skip）：速度更快；需要严格筛选时去掉 --skip
+    command: ["python", "-u", "subscribe/collect.py", "--overwrite", "--skip", "--targets", "clash"]
     restart: "no"
 
   data-server:
