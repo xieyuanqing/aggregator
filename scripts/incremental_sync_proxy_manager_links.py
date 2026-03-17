@@ -42,6 +42,7 @@ SECRETS_URL_FILE = os.path.join(ROOT, "secrets", "proxy_manager_links_url.txt")
 STATE_FILE = os.path.join(DATA_DIR, "pool_state_links.json")
 OUT_FILE = os.path.join(DATA_DIR, "sub.txt")
 LAST_SYNC_LOG = os.path.join(DATA_DIR, "last_sync_links.log")
+KEEP_GOOD_FILE = os.path.join(DATA_DIR, "keep_good.txt")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -53,6 +54,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 RETENTION_HOURS = _env_int("RETENTION_HOURS", 24 * 7)  # 7d
+# MAX_LINKS=0 means unlimited (no cap)
 MAX_LINKS = _env_int("MAX_LINKS", 300)
 HTTP_TIMEOUT = _env_int("SYNC_HTTP_TIMEOUT", 60)
 
@@ -128,6 +130,13 @@ def load_state() -> Dict[str, Any]:
         data = json.load(f)
     if not isinstance(data, dict) or "items" not in data or not isinstance(data["items"], dict):
         return {"version": 1, "items": {}}
+    # ensure each item is a mapping
+    items = data.get("items") or {}
+    if isinstance(items, dict):
+        for k, v in list(items.items()):
+            if not isinstance(v, dict):
+                items.pop(k, None)
+    data["items"] = items
     return data
 
 
@@ -167,38 +176,74 @@ def main() -> int:
         print("upstream returned 0 proxy URIs", file=sys.stderr)
         return 3
 
+    # Load keep-good URIs if present (B方案: new batch + previously verified good nodes)
+    keep_good: List[str] = []
+    if os.path.exists(KEEP_GOOD_FILE):
+        try:
+            with open(KEEP_GOOD_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if URI_RE.match(line):
+                        keep_good.append(line)
+        except Exception:
+            keep_good = []
+
     state = load_state()
     items: Dict[str, Any] = state["items"]
 
+    # reset pinned flags
+    for it in items.values():
+        if isinstance(it, dict):
+            it.pop("pinned", None)
+
     added = 0
     updated = 0
-    for uri in incoming:
+
+    def upsert(uri: str, pinned: bool = False) -> None:
+        nonlocal added, updated
         k = uri_key(uri)
         it = items.get(k)
         if it is None:
-            items[k] = {"uri": uri, "first_seen": now, "last_seen": now, "seen": 1}
+            items[k] = {"uri": uri, "first_seen": now, "last_seen": now, "seen": 1, "pinned": pinned}
             added += 1
         else:
             it["uri"] = uri
             it["last_seen"] = now
             it["seen"] = int(it.get("seen", 0)) + 1
+            if pinned:
+                it["pinned"] = True
             updated += 1
+
+    # always keep-good first (so they don't get evicted by retention)
+    for uri in keep_good:
+        upsert(uri, pinned=True)
+
+    for uri in incoming:
+        upsert(uri, pinned=False)
 
     retention_sec = RETENTION_HOURS * 3600
     before = len(items)
-    stale = [k for k, it in items.items() if now - int(it.get("last_seen", 0)) > retention_sec]
+    stale = [k for k, it in items.items() if not it.get("pinned") and now - int(it.get("last_seen", 0)) > retention_sec]
     for k in stale:
         items.pop(k, None)
 
-    if len(items) > MAX_LINKS:
-        ranked = sorted(items.items(), key=lambda kv: int(kv[1].get("last_seen", 0)), reverse=True)
+    # Cap size if MAX_LINKS > 0
+    if MAX_LINKS > 0 and len(items) > MAX_LINKS:
+        ranked = sorted(items.items(), key=lambda kv: (0 if kv[1].get("pinned") else 1, -int(kv[1].get("last_seen", 0))))
         keep = dict(ranked[:MAX_LINKS])
         items.clear()
         items.update(keep)
 
     removed = before - len(items)
 
-    out_list = [it["uri"] for it in sorted(items.values(), key=lambda it: int(it.get("last_seen", 0)), reverse=True)]
+    # Output: pinned first, then recent
+    def sort_key(it: Dict[str, Any]):
+        pinned = 1 if it.get("pinned") else 0
+        return (-pinned, -int(it.get("last_seen", 0)))
+
+    out_list = [it["uri"] for it in sorted(items.values(), key=sort_key)]
     if len(out_list) == 0:
         print("refusing to publish empty sub.txt", file=sys.stderr)
         return 4
@@ -208,7 +253,7 @@ def main() -> int:
 
     summary = (
         f"{time.strftime('%Y-%m-%d %H:%M:%S')} sync_ok "
-        f"incoming={len(incoming)} added={added} updated={updated} removed={removed} kept={len(out_list)} "
+        f"incoming={len(incoming)} keep_good={len(keep_good)} added={added} updated={updated} removed={removed} kept={len(out_list)} "
         f"retention_hours={RETENTION_HOURS} max_links={MAX_LINKS}"
     )
     log_line(summary)

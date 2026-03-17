@@ -15,7 +15,13 @@ mkdir -p data
 chmod 777 data || true
 
 export RETENTION_HOURS=${RETENTION_HOURS:-168}  # 7 days
-export MAX_LINKS=${MAX_LINKS:-300}
+# For now: do not cap by default (user can set MAX_LINKS later when pool grows)
+export MAX_LINKS=${MAX_LINKS:-0}
 export SYNC_HTTP_TIMEOUT=${SYNC_HTTP_TIMEOUT:-60}
+export KEEP_GOOD=${KEEP_GOOD:-10}
+
+# Best-effort: export currently verified-good nodes from EasyProxiesV2 to keep list.
+# If auth fails / service down, we still continue with upstream sync.
+python3 scripts/export_good_from_v2.py >/dev/null 2>&1 || true
 
 python3 scripts/incremental_sync_proxy_manager_links.py
