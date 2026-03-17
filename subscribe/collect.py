@@ -200,9 +200,13 @@ def assign(
 def aggregate(args: argparse.Namespace) -> None:
     def parse_gist_link(link: str) -> tuple[str, str]:
         # 提取 gist 用户名及 id
-        words = utils.trim(link).split("/", maxsplit=1)
+        link = utils.trim(link)
+        if not link:
+            return "", ""
+
+        words = link.split("/", maxsplit=1)
         if len(words) != 2:
-            logger.error(f"cannot extract username and gist id due to invalid github gist link")
+            logger.error("cannot extract username and gist id due to invalid github gist link")
             return "", ""
 
         return utils.trim(words[0]), utils.trim(words[1])
